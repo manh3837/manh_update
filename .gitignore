@@ -40,6 +40,5 @@ Thumbs.db
 coverage/
 .oxlintcache
 .eslintcache
-
 Backend/src/
 Frontend/src/
