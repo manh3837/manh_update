@@ -6,6 +6,7 @@ export interface UpdateProfileParams {
   name: string;
   email: string;
   phone?: string;
+  date_of_birth?: string;
 }
 
 export interface ChangePasswordParams {
@@ -22,9 +23,11 @@ export interface AdminUser {
   name: string;
   email: string;
   phone: string;
+  date_of_birth?: string | null;
   role: AdminRole;
   status: AdminStatus;
   points: number;
+  last_login?: string | null;
   created_at: string;
   updated_at: string;
   /** Số đơn đặt vé (dùng để cảnh báo khi xóa) */

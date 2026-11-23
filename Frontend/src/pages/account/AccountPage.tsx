@@ -11,11 +11,18 @@ import { Badge } from "@/components/ui/badge"
 import { useOutletContext } from "react-router-dom"
 import type { MainLayoutContextType } from "@/layouts/MainLayout"
 
+function getMembershipTier(points: number = 0) {
+    if (points >= 600) return { name: "Thành viên Kim Cương", badge: "border-[#059669] bg-[#064e3b] text-[#6ee7b7]" }
+    if (points >= 300) return { name: "Thành viên Vàng", badge: "border-[#d97706] bg-[#78350f] text-[#fde047]" }
+    if (points >= 100) return { name: "Thành viên Bạc", badge: "border-[#64748b] bg-[#1e293b] text-[#cbd5e1]" }
+    return { name: "Thành viên Đồng", badge: "border-[#b45309] bg-[#451a03] text-[#fdba74]" }
+}
+
 export const AccountPage = () => {
     const { showToast } = useOutletContext<MainLayoutContextType>()
 
     const savedUserStr = localStorage.getItem("user")
-    let savedUser = null
+    let savedUser: any = null
     try {
         savedUser = savedUserStr ? JSON.parse(savedUserStr) : null
     } catch {
@@ -26,7 +33,7 @@ export const AccountPage = () => {
     const [fullName, setFullName] = useState(savedUser?.name || "Người dùng")
     const [phoneNumber, setPhoneNumber] = useState(savedUser?.phone || "0912 345 678")
     const [email, setEmail] = useState(savedUser?.email || "user@email.com")
-    const [dob, setDob] = useState("2001-06-15")
+    const [dob, setDob] = useState(savedUser?.date_of_birth ? String(savedUser.date_of_birth).slice(0, 10) : "2001-06-15")
     const [gender, setGender] = useState("female")
     const [favoriteCinema, setFavoriteCinema] = useState("Cinema Nguyễn Du")
 
@@ -43,6 +50,7 @@ export const AccountPage = () => {
     // Loading states
     const [isSavingInfo, setIsSavingInfo] = useState(false)
     const [isUpdatingPassword, setIsUpdatingPassword] = useState(false)
+    const membership = getMembershipTier(savedUser?.points ?? 120)
 
     const handleSaveInfo = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -63,6 +71,7 @@ export const AccountPage = () => {
                 name: fullName.trim(),
                 email: email.trim(),
                 phone: phoneNumber.trim(),
+                date_of_birth: dob || undefined,
             })
 
             if (res.success && res.user) {
@@ -71,6 +80,7 @@ export const AccountPage = () => {
                     name: res.user.name,
                     email: res.user.email,
                     phone: res.user.phone,
+                    date_of_birth: res.user.date_of_birth || dob,
                 }
                 localStorage.setItem("user", JSON.stringify(updatedUser))
                 window.dispatchEvent(new Event("auth-changed"))
@@ -156,12 +166,12 @@ export const AccountPage = () => {
                         <div className="space-y-1">
                             <div className="flex items-center gap-2.5">
                                 <h2 className="text-xl font-bold text-white">{fullName}</h2>
-                                <Badge className="border-[#2a3c25] bg-[#162518] px-2.5 py-0.5 text-xs font-bold text-[#caef6b]">
+                                <Badge className={`px-2.5 py-0.5 text-xs font-bold border ${savedUser?.role === "admin" ? "border-[#2a3c25] bg-[#162518] text-[#caef6b]" : savedUser?.role === "manager" ? "border-[#3b3a60] bg-[#1f1d38] text-[#a78bfa]" : membership.badge}`}>
                                     {savedUser?.role === "admin"
                                         ? "Quản trị viên"
                                         : savedUser?.role === "manager"
                                             ? "Quản lý rạp"
-                                            : "Thành viên VIP"}
+                                            : membership.name}
                                 </Badge>
                             </div>
                             <p className="text-xs text-[#9ba9ba]">

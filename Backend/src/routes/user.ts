@@ -27,9 +27,11 @@ userRouter.get("/", authenticateToken, requireAdmin, async (_req, res) => {
       name: user.name,
       email: user.email,
       phone: user.phone || "",
+      date_of_birth: user.date_of_birth || null,
       role: user.role || "customer",
       status: user.status || "active",
       points: user.points ?? 0,
+      last_login: user.last_login || null,
       created_at: user.created_at,
       updated_at: user.updated_at,
       booking_count: Number(user.booking_count || 0),
@@ -45,10 +47,10 @@ userRouter.get("/", authenticateToken, requireAdmin, async (_req, res) => {
   }
 });
 
-// [PUT] /api/users/profile - Cập nhật thông tin cá nhân (Họ tên, SĐT, Email) vào MySQL
+// [PUT] /api/users/profile - Cập nhật thông tin cá nhân (Họ tên, SĐT, Email, Ngày sinh) vào MySQL
 userRouter.put("/profile", async (req, res) => {
   try {
-    const { userId, name, email, phone } = req.body;
+    const { userId, name, email, phone, date_of_birth } = req.body;
 
     if (!userId || !name || !email) {
       return res.status(400).json({
@@ -97,6 +99,7 @@ userRouter.put("/profile", async (req, res) => {
       name: name.trim(),
       email: email.trim().toLowerCase(),
       phone: phone ? phone.trim() : undefined,
+      date_of_birth: date_of_birth || undefined,
     });
 
     const updatedUser = await findUserById(Number(userId));

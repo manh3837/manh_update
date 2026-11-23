@@ -5,8 +5,10 @@ export interface UserProfile {
   name: string;
   email: string;
   phone?: string;
+  date_of_birth?: string | null;
   role: "admin" | "manager" | "customer";
   points?: number;
+  last_login?: string | null;
   avatar_url?: string;
 }
 
