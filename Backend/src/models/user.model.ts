@@ -7,11 +7,13 @@ export interface User {
   name: string;
   email: string;
   phone?: string;
+  date_of_birth?: string | null;
   password?: string;
   role?: "customer" | "manager" | "admin";
   status?: "active" | "locked" | "unverified";
   avatar_url?: string;
   points?: number;
+  last_login?: Date | null;
   created_at?: Date;
   updated_at?: Date;
   /** Số đơn đặt vé (chỉ dùng cho trang admin) */
@@ -29,7 +31,7 @@ export async function findUserByEmailOrPhone(identifier: string): Promise<User |
 
 //2. Tìm người dùng theo ID
 export async function findUserById(id: number): Promise<User | null> {
-  const query = "SELECT id, name, email, phone, role, status, points FROM users WHERE id = ? LIMIT 1";
+  const query = "SELECT id, name, email, phone, date_of_birth, role, status, points, last_login, created_at FROM users WHERE id = ? LIMIT 1";
   const [rows] = await pool.query<RowDataPacket[]>(query, [id]);
 
   if (rows.length === 0) return null;
@@ -42,38 +44,50 @@ export async function createUser(userData: {
   email: string;
   phone: string;
   password: string;
+  date_of_birth?: string;
 }): Promise<number> {
   const query = `
-    INSERT INTO users (name, email, phone, password, role, status, points)
-    VALUES (?, ?, ?, ?, 'customer', 'active', 0)
+    INSERT INTO users (name, email, phone, password, date_of_birth, role, status, points)
+    VALUES (?, ?, ?, ?, ?, 'customer', 'active', 0)
   `;
   const [result] = await pool.query<ResultSetHeader>(query, [
     userData.name,
     userData.email,
     userData.phone,
     userData.password,
+    userData.date_of_birth || null,
   ]);
 
   return result.insertId;
 }
 
-// 4. Cập nhật thông tin cá nhân (Họ tên, SĐT, Email)
+// 4. Cập nhật thông tin cá nhân (Họ tên, SĐT, Email, Ngày sinh)
 export async function updateUserProfile(
   id: number,
-  data: { name: string; phone?: string; email?: string }
+  data: { name: string; phone?: string; email?: string; date_of_birth?: string }
 ): Promise<boolean> {
   const query = `
     UPDATE users 
-    SET name = ?, phone = ?, email = ?
+    SET name = ?, phone = ?, email = ?, date_of_birth = ?
     WHERE id = ?
   `;
   const [result] = await pool.query<ResultSetHeader>(query, [
     data.name,
     data.phone || null,
     data.email,
+    data.date_of_birth || null,
     id,
   ]);
   return result.affectedRows > 0;
+}
+
+// 4.1 Cập nhật thời điểm đăng nhập cuối cùng
+export async function updateUserLastLogin(id: number): Promise<void> {
+  try {
+    await pool.query("UPDATE users SET last_login = NOW() WHERE id = ?", [id]);
+  } catch (error) {
+    console.error("Lỗi cập nhật last_login:", error);
+  }
 }
 
 //5. Cập nhật mật khẩu mới
@@ -98,8 +112,8 @@ export interface UserStats {
 /** Toàn bộ tài khoản (không kèm mật khẩu) */
 export async function getAllUsers(): Promise<User[]> {
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT u.id, u.name, u.email, u.phone, u.role, u.status, u.points,
-            u.created_at, u.updated_at,
+    `SELECT u.id, u.name, u.email, u.phone, u.date_of_birth, u.role, u.status, u.points,
+            u.last_login, u.created_at, u.updated_at,
             (SELECT COUNT(*) FROM bookings b WHERE b.user_id = u.id) AS booking_count
      FROM users u
      ORDER BY u.id ASC`

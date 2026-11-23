@@ -1,7 +1,12 @@
 import { Router, Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { findUserByEmailOrPhone, findUserById, createUser } from "../models/user.model.js";
+import {
+  findUserByEmailOrPhone,
+  findUserById,
+  createUser,
+  updateUserLastLogin,
+} from "../models/user.model.js";
 
 const authRouter = Router();
 
@@ -82,7 +87,7 @@ export function requireManagerOrAdmin(req: Request & { user?: TokenPayload }, re
 
 authRouter.post("/register", async (req, res) => {
   try {
-    const { name, email, phone, password } = req.body;
+    const { name, email, phone, password, date_of_birth } = req.body;
 
     // 1. Kiểm tra dữ liệu đầu vào
     if (!name || !email || !phone || !password) {
@@ -126,6 +131,7 @@ authRouter.post("/register", async (req, res) => {
       email: email.trim().toLowerCase(),
       phone: phone.trim(),
       password: hashedPassword,
+      date_of_birth: date_of_birth || undefined,
     });
 
     // 5. Cấp JWT Token
@@ -144,6 +150,7 @@ authRouter.post("/register", async (req, res) => {
         name: name.trim(),
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
+        date_of_birth: date_of_birth || null,
         role: "customer",
         points: 0,
       },
@@ -207,14 +214,17 @@ authRouter.post("/login", async (req, res) => {
       });
     }
 
-    // 3. Cấp JWT Token
+    // 3. Cập nhật thời điểm đăng nhập cuối (last_login)
+    await updateUserLastLogin(user.id!);
+
+    // 4. Cấp JWT Token
     const token = generateToken({
       id: user.id!,
       email: user.email,
       role: user.role || "customer",
     });
 
-    // 4. Trả về thông tin đăng nhập thành công kèm Token
+    // 5. Trả về thông tin đăng nhập thành công kèm Token
     return res.json({
       success: true,
       message: "Đăng nhập thành công!",
@@ -224,8 +234,10 @@ authRouter.post("/login", async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        date_of_birth: user.date_of_birth || null,
         role: user.role,
         points: user.points,
+        last_login: new Date(),
       },
     });
   } catch (error) {
@@ -257,8 +269,10 @@ authRouter.get("/me", authenticateToken, async (req: any, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        date_of_birth: user.date_of_birth || null,
         role: user.role,
         points: user.points,
+        last_login: user.last_login || null,
       },
     });
   } catch (error) {
