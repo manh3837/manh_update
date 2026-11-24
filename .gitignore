@@ -40,7 +40,5 @@ Thumbs.db
 coverage/
 .oxlintcache
 .eslintcache
-
-# Giấu toàn bộ mã nguồn nghiệp vụ và giao diện trong src
 Backend/src/
 Frontend/src/
