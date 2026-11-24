@@ -181,15 +181,14 @@ CREATE TABLE IF NOT EXISTS pricing_tiers (
 -- =====================================================
 
 -- ── USERS ───────────────────────────────────────────
--- Mật khẩu mẫu: "password123" → hash bcrypt (thực tế dùng bcrypt trong code)
--- Ở đây để chuỗi placeholder; sau khi tạo user thật thì hash bằng code
+-- Mật khẩu mặc định cho toàn bộ tài khoản mẫu: "password123"
 INSERT INTO users (name, email, phone, password, role, status, points) VALUES
-  ('Nguyễn Minh Anh',    'minhanh.nguyen@email.com', '0912345678', '$2b$10$placeholder_hash_admin1', 'customer', 'active', 120),
-  ('Trần Thu Hà',        'thuha@cinemamanagement.vn',            '0912345679', '$2b$10$placeholder_hash_admin2', 'admin',    'active', 0),
-  ('Nguyễn Hoàng Nam',   'hoangnam@cinemamanagement.vn',         '0908765432', '$2b$10$placeholder_hash_admin3', 'admin',    'active', 0),
-  ('Lê Thị Thanh Hương', 'thanh.huong@email.com',     '0978123456', '$2b$10$placeholder_hash_staff1', 'customer', 'active', 0),
-  ('Phạm Văn Đức',       'vanduc.pham@email.com',     '0961234567', '$2b$10$placeholder_hash_cust1',  'customer', 'active', 45),
-  ('Hoàng Thị Lan',      'hlan@email.com',             '0937654321', '$2b$10$placeholder_hash_cust2',  'customer', 'locked', 10);
+  ('Nguyễn Minh Anh',    'minhanh.nguyen@email.com', '0912345678', '$2b$10$1U17.i265JBNWnNLB5WhfOdd8d0E2/LKnRBvmZ8ICL5ZNp4i0MtyW', 'customer', 'active', 120),
+  ('Trần Thu Hà',        'thuha@cinemamanagement.vn',            '0912345679', '$2b$10$1U17.i265JBNWnNLB5WhfOdd8d0E2/LKnRBvmZ8ICL5ZNp4i0MtyW', 'admin',    'active', 0),
+  ('Nguyễn Hoàng Nam',   'hoangnam@cinemamanagement.vn',         '0908765432', '$2b$10$1U17.i265JBNWnNLB5WhfOdd8d0E2/LKnRBvmZ8ICL5ZNp4i0MtyW', 'admin',    'active', 0),
+  ('Lê Thị Thanh Hương', 'thanh.huong@email.com',     '0978123456', '$2b$10$1U17.i265JBNWnNLB5WhfOdd8d0E2/LKnRBvmZ8ICL5ZNp4i0MtyW', 'customer', 'active', 0),
+  ('Phạm Văn Đức',       'vanduc.pham@email.com',     '0961234567', '$2b$10$1U17.i265JBNWnNLB5WhfOdd8d0E2/LKnRBvmZ8ICL5ZNp4i0MtyW',  'customer', 'active', 45),
+  ('Hoàng Thị Lan',      'hlan@email.com',             '0937654321', '$2b$10$1U17.i265JBNWnNLB5WhfOdd8d0E2/LKnRBvmZ8ICL5ZNp4i0MtyW',  'customer', 'locked', 10);
 
 -- ── CINEMAS ─────────────────────────────────────────
 INSERT INTO cinemas (name, address, district, city, phone, has_dolby_atmos, has_vip_seats, has_imax, has_4dx) VALUES
@@ -328,10 +327,16 @@ CREATE TABLE IF NOT EXISTS favorites (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ── SAMPLE BOOKING ────────────────────────────────────
-INSERT INTO bookings (user_id, showtime_id, booking_code, customer_name, customer_email, customer_phone, total_price, discount_amount, payment_method, payment_status, status)
+INSERT INTO bookings (user_id, showtime_id, booking_code, customer_name, customer_email, customer_phone, total_price, discount_amount, payment_method, payment_status, status, created_at)
 VALUES
-  (1, 3, 'CM-2410-TNH78', 'Nguyễn Minh Anh', 'minhanh.nguyen@email.com', '0912345678', 240000, 0, 'momo', 'paid', 'upcoming'),
-  (5, 5, 'CM-1210-CTB42', 'Phạm Văn Đức',    'vanduc.pham@email.com',    '0961234567', 190000, 0, 'card', 'paid', 'completed');
+  (1, 1, 'CM-2410-TNH01', 'Nguyễn Minh Anh',    'minhanh.nguyen@email.com', '0912345678', 5400000, 0, 'momo',    'paid', 'completed', '2026-10-24 08:15:00'),
+  (4, 2, 'CM-2410-TPK02', 'Lê Thị Thanh Hương', 'thanh.huong@email.com',    '0978123456', 3600000, 0, 'zalopay', 'paid', 'completed', '2026-10-24 13:20:00'),
+  (1, 3, 'CM-2410-TNH78', 'Nguyễn Minh Anh',    'minhanh.nguyen@email.com', '0912345678', 7200000, 0, 'momo',    'paid', 'upcoming',  '2026-10-24 18:45:00'),
+  (5, 4, 'CM-2410-QMK04', 'Phạm Văn Đức',       'vanduc.pham@email.com',    '0961234567', 4100000, 0, 'vnpay',   'paid', 'completed', '2026-10-24 09:10:00'),
+  (5, 5, 'CM-2410-CTB42', 'Phạm Văn Đức',       'vanduc.pham@email.com',    '0961234567', 3800000, 0, 'card',    'paid', 'completed', '2026-10-24 12:30:00'),
+  (4, 6, 'CM-2410-KRB06', 'Lê Thị Thanh Hương', 'thanh.huong@email.com',    '0978123456', 2700000, 0, 'momo',    'paid', 'completed', '2026-10-24 08:40:00'),
+  (1, 7, 'CM-2510-IMX07', 'Nguyễn Minh Anh',    'minhanh.nguyen@email.com', '0912345678', 9600000, 0, 'card',    'paid', 'upcoming',  '2026-10-25 17:00:00'),
+  (5, 8, 'CM-2510-IMX08', 'Phạm Văn Đức',       'vanduc.pham@email.com',    '0961234567', 8400000, 0, 'zalopay', 'paid', 'upcoming',  '2026-10-25 19:30:00');
 
 -- =====================================================
 -- Xác nhận import thành công
