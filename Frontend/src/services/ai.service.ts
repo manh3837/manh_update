@@ -65,18 +65,28 @@ export const aiService = {
   /**
    * Gửi câu hỏi chat tới AI tư vấn rạp phim
    */
-  async chatWithAI(message: string): Promise<{ reply?: string; error?: string }> {
-    const res = await apiRequest<{ reply: string }>("/ai/chat", {
+  async chatWithAI(
+    message: string
+  ): Promise<{ success: boolean; reply?: string; recommendedMovies?: any[]; error?: string }> {
+    const res = await apiRequest<{ success: boolean; reply: string; recommendedMovies?: any[] }>("/ai/chat", {
       method: "POST",
       body: JSON.stringify({ message }),
       timeoutMs: 25000,
     });
 
     if (res.success && (res as any).reply) {
-      return { reply: (res as any).reply };
+      return {
+        success: true,
+        reply: (res as any).reply,
+        recommendedMovies: (res as any).recommendedMovies || [],
+      };
     }
 
-    return { error: res.message || "Lỗi trò chuyện với AI" };
+    return {
+      success: false,
+      reply: (res as any)?.reply,
+      error: res.message || "Lỗi trò chuyện với AI",
+    };
   },
 
   /**

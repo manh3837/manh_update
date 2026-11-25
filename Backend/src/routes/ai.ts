@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { Type } from "@google/genai";
+import type { RowDataPacket } from "mysql2";
+import { pool } from "../config/db.js";
 import { ai, GEMINI_MODEL } from "../config/gemini.js";
 import { authenticateToken, requireManagerOrAdmin } from "./auth.js";
 import { AutoScheduleInput } from "../types/schedule.types.js";
@@ -86,7 +88,7 @@ function isTimeoutError(err: unknown): boolean {
 /**
  * POST /api/ai/chat
  * Body: { message: string }
- * Trả về câu trả lời AI tư vấn điện ảnh Cinema Management
+ * Trả về câu trả lời AI tư vấn điện ảnh Cinema Management kết hợp dữ liệu phim thực tế từ MySQL
  */
 router.post("/chat", async (req, res) => {
   try {
@@ -96,11 +98,39 @@ router.post("/chat", async (req, res) => {
       return res.status(400).json({ success: false, error: "message không được để trống" });
     }
 
-    const systemPrompt = `Bạn là trợ lý AI điện ảnh của Cinema Management – rạp chiếu phim cao cấp tại TP. Hồ Chí Minh.
-Nhiệm vụ của bạn là:
-- Gợi ý phim phù hợp với tâm trạng, sở thích hoặc dịp đặc biệt của khách.
-- Trả lời câu hỏi về phim đang chiếu, lịch chiếu, rạp, ghế VIP, giá vé.
-- Trả lời ngắn gọn (tối đa 4 câu), nhiệt tình, thân thiện, bằng Tiếng Việt.`;
+    // 1. Lấy danh sách phim đang chiếu thực tế từ Database
+    let activeMovies: RowDataPacket[] = [];
+    try {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT id, title, rating, genre, duration_min, synopsis, format, poster_url, ai_recommendation
+         FROM movies
+         WHERE status = 'now_showing'
+         ORDER BY is_featured DESC, id ASC`
+      );
+      activeMovies = rows;
+    } catch (dbErr) {
+      console.warn("[AI /chat] Không query được movies từ DB, dùng danh sách fallback:", dbErr);
+    }
+
+    const movieListStr = activeMovies.length > 0
+      ? activeMovies.map((m, idx) => `${idx + 1}. [ID: ${m.id}] "${m.title}" (${m.genre} · ${m.duration_min} phút · Hạng ${m.rating}) - ${m.synopsis || m.ai_recommendation || ""}`).join("\n")
+      : `1. "Tín hiệu từ ngày mai" (Khoa học viễn tưởng · 118 phút · T13)
+2. "Qua miền ký ức" (Khoa học viễn tưởng · 106 phút · T13)
+3. "Chuyến tàu bình minh" (Phiêu lưu · 112 phút · P)
+4. "Thành phố không ngủ" (Hành động · 124 phút · T18)
+5. "Khu rừng biết nói" (Hoạt hình · 95 phút · P)
+6. "Mùa hè ở lại" (Tình cảm · 102 phút · T13)`;
+
+    const systemPrompt = `Bạn là trợ lý AI chuyên gia điện ảnh của hệ thống rạp chiếu phim cao cấp Cinema Management tại TP. Hồ Chí Minh.
+Dưới đây là danh sách toàn bộ các bộ phim HIỆN ĐANG CHIẾU THỰC TẾ tại rạp:
+${movieListStr}
+
+Nhiệm vụ của bạn:
+1. Lắng nghe nhu cầu, cảm xúc, gu phim hoặc dịp xem phim của khách hàng.
+2. Tư vấn và gợi ý 1 đến 2 bộ phim PHÙ HỢP NHẤT trong danh sách phim đang chiếu ở trên.
+3. Giải thích ngắn gọn lý do vì sao bộ phim đó phù hợp với khách (hình ảnh, âm thanh Dolby Atmos, cảm xúc).
+4. Luôn trả lời bằng Tiếng Việt thân thiện, nhiệt tình, lịch sự, ngắn gọn (tối đa 4 câu).
+5. QUAN TRỌNG: Hãy nhắc chính xác tên của bộ phim được gợi ý trong dấu ngoặc kép hoặc đề cập rõ tên phim để hệ thống nhận diện.`;
 
     const response = await ai.models.generateContent({
       model: GEMINI_MODEL,
@@ -108,23 +138,49 @@ Nhiệm vụ của bạn là:
         { role: "user", parts: [{ text: systemPrompt + "\n\nKhách hàng hỏi: " + message }] },
       ],
       config: {
-        temperature: 0.8,
-        maxOutputTokens: 400,
+        temperature: 0.7,
+        maxOutputTokens: 500,
       },
     });
 
     const text = response.text ?? "";
 
-    // `success: true` để aiService.chatWithAI() nhận được kết quả (trước đây thiếu field này)
-    return res.json({ success: true, reply: text });
+    // Tìm các phim được AI gợi ý dựa trên tiêu đề xuất hiện trong câu trả lời
+    const matchedMovies = activeMovies.filter((m) =>
+      text.toLowerCase().includes(m.title.toLowerCase())
+    );
+
+    // Nếu không khớp tên nào do AI nói chung chung, lấy 2 phim nổi bật nhất làm gợi ý
+    const recommendedList = matchedMovies.length > 0 ? matchedMovies.slice(0, 3) : activeMovies.slice(0, 2);
+
+    return res.json({
+      success: true,
+      reply: text,
+      recommendedMovies: recommendedList.map((m) => ({
+        id: String(m.id),
+        title: m.title,
+        rating: m.rating,
+        genre: m.genre,
+        duration: `${m.duration_min} phút`,
+        synopsis: m.synopsis || m.ai_recommendation,
+        format: m.format,
+        posterUrl: m.poster_url,
+      })),
+    });
   } catch (err) {
     console.error("[AI /chat] error:", err);
     if (isTimeoutError(err)) {
-      return res
-        .status(504)
-        .json({ success: false, error: "AI phản hồi quá lâu, vui lòng thử lại." });
+      return res.status(504).json({
+        success: false,
+        error: "AI phản hồi quá lâu, vui lòng thử lại.",
+        reply: "Rất tiếc hiện tại kết nối đến AI đang bận. Bạn có thể tham khảo ngay 2 phim hot nhất hôm nay là 'Tín hiệu từ ngày mai' và 'Thành phố không ngủ' đang có nhiều suất chiếu đẹp tại Cinema Management!",
+      });
     }
-    return res.status(500).json({ success: false, error: "Lỗi AI, vui lòng thử lại." });
+    return res.status(500).json({
+      success: false,
+      error: "Lỗi AI, vui lòng thử lại.",
+      reply: "Hệ thống AI đang khởi động lại. Mời bạn tham khảo lịch chiếu hôm nay tại trang Lịch chiếu hoặc thử hỏi lại nhé!",
+    });
   }
 });
 

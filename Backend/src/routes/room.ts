@@ -8,6 +8,7 @@ import {
   isRoomNameTaken,
   type RoomInput,
 } from "../models/room.model.js";
+import { getDetailedRevenueReport, type RevenueReportQuery } from "../models/revenue.model.js";
 import { authenticateToken, requireManagerOrAdmin } from "./auth.js";
 
 const roomRouter = Router();
@@ -101,6 +102,32 @@ roomRouter.get("/", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Lỗi máy chủ khi tải danh sách phòng!",
+    });
+  }
+});
+
+// GET /api/rooms/revenue-breakdown - Báo cáo doanh thu chi tiết theo từng phòng và từng phim (Admin / Manager)
+roomRouter.get("/revenue-breakdown", async (req, res) => {
+  try {
+    const { cinemaId, periodType, date, month, startDate, endDate } = req.query as Record<string, string>;
+
+    const query: RevenueReportQuery = {
+      cinemaId: cinemaId && cinemaId !== "all" ? parseId(cinemaId) || undefined : undefined,
+      periodType: (periodType as "day" | "month" | "range") || "day",
+      date,
+      month,
+      startDate,
+      endDate,
+    };
+
+    const report = await getDetailedRevenueReport(query);
+    return res.json({ success: true, data: report });
+  } catch (error: any) {
+    console.error("Lỗi tạo báo cáo doanh thu chi tiết:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi máy chủ khi lấy báo cáo doanh thu phòng và phim!",
+      error: error?.message,
     });
   }
 });
