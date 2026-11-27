@@ -1,5 +1,6 @@
 import { pool } from "../config/db.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { classifySeatForRoom } from "./booking.model.js";
 
 // ══════════════════════════════════════════════════════════════
 // INTERFACES
@@ -21,13 +22,14 @@ export interface CreateBookingParams {
   showtimeId: number;
   seats: string[];           // ["F7", "F8"]
   seatIds?: number[];        // ID ghế trong bảng seats (nếu có)
+  sessionId?: string;
   customerName: string;
   customerEmail: string;
   customerPhone: string;
   totalPrice: number;
   discountAmount: number;
   promoCode?: string;
-  paymentMethod: "momo" | "zalopay" | "card";
+  paymentMethod: "momo" | "zalopay" | "card" | "vnpay";
 }
 
 export interface BookingResult {
@@ -39,19 +41,35 @@ export interface BookingResult {
   finalPrice: number;
   pointsEarned: number;
   paymentStatus: string;
+  cinemaName?: string;
+  cinemaAddress?: string;
+  cinemaPhone?: string;
+  roomName?: string;
+  showtime?: string;
+  endTime?: string;
+  showDate?: string;
+  format?: string;
 }
 
 export interface TicketDetail {
   id: number;
   bookingCode: string;
   movieTitle: string;
+  movieRating: string;
+  movieDuration: number;
+  movieGenre: string;
   posterUrl: string | null;
   cinemaName: string;
+  cinemaAddress: string;
+  cinemaPhone: string;
   roomName: string;
   showtime: string;
   endTime: string;
   showDate: string;
   seats: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
   totalPrice: number;
   discountAmount: number;
   finalPrice: number;
@@ -84,7 +102,6 @@ export async function initVouchersTable(): Promise<void> {
   `;
   try {
     await pool.query(query);
-    // Seed dữ liệu mẫu nếu bảng trống
     await seedVouchers();
   } catch (err) {
     console.error("Lỗi khởi tạo bảng vouchers:", err);
@@ -111,9 +128,7 @@ async function seedVouchers(): Promise<void> {
   }
 }
 
-
 // 2. XÁC THỰC MÃ GIẢM GIÁ (VOUCHER PROMO CODE)
-
 export async function validateVoucher(
   code: string,
   orderTotal: number
@@ -131,12 +146,10 @@ export async function validateVoucher(
 
   const v = rows[0];
 
-  // Kiểm tra số lượt sử dụng
   if (v.usage_count >= v.usage_limit) {
     return { valid: false, message: "Mã giảm giá đã hết lượt sử dụng!" };
   }
 
-  // Kiểm tra đơn tối thiểu
   if (orderTotal < v.min_order_value) {
     return {
       valid: false,
@@ -144,7 +157,6 @@ export async function validateVoucher(
     };
   }
 
-  // Tính số tiền giảm
   let discountAmount = 0;
   if (v.discount_type === "fixed") {
     discountAmount = v.discount_value;
@@ -180,7 +192,6 @@ export function generateBookingCode(): string {
   const dd = String(now.getDate()).padStart(2, "0");
   const mm = String(now.getMonth() + 1).padStart(2, "0");
 
-  // Tạo phần ngẫu nhiên 5 ký tự (chữ + số)
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let random = "";
   for (let i = 0; i < 5; i++) {
@@ -190,20 +201,29 @@ export function generateBookingCode(): string {
   return `CM-${dd}${mm}-${random}`;
 }
 
-// 4. TẠO MÃ QR CHECK-IN (Base64 SVG inline — không cần thư viện)
+// 4. TẠO DỮ LIỆU MÃ QR CHECK-IN
 export function generateQRCodeData(bookingCode: string): string {
-  // Trả về chuỗi dữ liệu QR (URL deep-link cho máy quét tại rạp)
-  // Trong production, sẽ dùng thư viện như `qrcode` để tạo ảnh QR thật
   return `https://cinemamanagement.vn/checkin/${bookingCode}`;
 }
 
+function formatSeatLabels(seatRows: RowDataPacket[]): string {
+  if (seatRows.length === 0) return "Không rõ";
+  const seatCodes = seatRows.map((s) => String(s.seatCode));
+  const types = new Set(seatRows.map((s) => String(s.seat_type)));
+  const typeLabels: string[] = [];
+  if (types.has("sweetbox")) typeLabels.push("Sweetbox");
+  if (types.has("vip")) typeLabels.push("VIP");
+  if (types.has("regular")) typeLabels.push("Thường");
+  return `${seatCodes.join(", ")}${typeLabels.length > 0 ? ` (${typeLabels.join(", ")})` : ""}`;
+}
 
-// 5. TẠO BOOKING — LƯU VÀO DATABASE VÀ CẬP NHẬT ĐIỂM TÍCH LŨY
+// 5. TẠO BOOKING — LƯU VÀO DATABASE THEO ĐÚNG SUẤT CHIẾU VÀ CẬP NHẬT ĐIỂM TÍCH LŨY
 export async function createBooking(params: CreateBookingParams): Promise<BookingResult> {
   const {
     userId,
     showtimeId,
     seats,
+    sessionId,
     customerName,
     customerEmail,
     customerPhone,
@@ -213,7 +233,7 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
     paymentMethod,
   } = params;
 
-  // Đảm bảo userId hợp lệ trong DB (tránh lỗi foreign key)
+  // Đảm bảo userId hợp lệ trong DB
   let validUserId = userId;
   try {
     const [uRows] = await pool.query<RowDataPacket[]>(
@@ -230,27 +250,81 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
     // giữ nguyên
   }
 
-  // Đảm bảo showtimeId hợp lệ trong DB
+  // Kiểm tra suất chiếu hợp lệ & lấy thông tin rạp/phòng
   let validShowtimeId = showtimeId;
-  try {
-    const [stRows] = await pool.query<RowDataPacket[]>(
-      "SELECT id FROM showtimes WHERE id = ? LIMIT 1",
-      [showtimeId]
+  let showtimeMeta: RowDataPacket | null = null;
+  const [stRows] = await pool.query<RowDataPacket[]>(
+    `SELECT s.id, s.room_id, s.format,
+            DATE_FORMAT(s.start_time, '%H:%i') AS showtime_str,
+            DATE_FORMAT(s.end_time, '%H:%i') AS end_time_str,
+            DATE_FORMAT(s.start_time, '%d/%m/%Y') AS show_date_str,
+            r.name AS room_name, r.rows_count, r.vip_rows,
+            c.name AS cinema_name,
+            CONCAT_WS(', ', c.address, c.district, c.city) AS cinema_address,
+            COALESCE(c.phone, '0123 456 789') AS cinema_phone
+     FROM showtimes s
+     JOIN rooms r ON r.id = s.room_id
+     JOIN cinemas c ON c.id = r.cinema_id
+     WHERE s.id = ?
+     LIMIT 1`,
+    [showtimeId]
+  );
+
+  if (stRows.length > 0) {
+    showtimeMeta = stRows[0];
+    validShowtimeId = Number(showtimeMeta.id);
+  } else {
+    const [fallbackRows] = await pool.query<RowDataPacket[]>(
+      `SELECT s.id, s.room_id, s.format,
+              DATE_FORMAT(s.start_time, '%H:%i') AS showtime_str,
+              DATE_FORMAT(s.end_time, '%H:%i') AS end_time_str,
+              DATE_FORMAT(s.start_time, '%d/%m/%Y') AS show_date_str,
+              r.name AS room_name, r.rows_count, r.vip_rows,
+              c.name AS cinema_name,
+              CONCAT_WS(', ', c.address, c.district, c.city) AS cinema_address,
+              COALESCE(c.phone, '0123 456 789') AS cinema_phone
+       FROM showtimes s
+       JOIN rooms r ON r.id = s.room_id
+       JOIN cinemas c ON c.id = r.cinema_id
+       ORDER BY s.id ASC
+       LIMIT 1`
     );
-    if (stRows.length === 0) {
-      const [firstSt] = await pool.query<RowDataPacket[]>(
-        "SELECT id FROM showtimes ORDER BY id ASC LIMIT 1"
-      );
-      if (firstSt.length > 0) validShowtimeId = firstSt[0].id;
+    if (fallbackRows.length > 0) {
+      showtimeMeta = fallbackRows[0];
+      validShowtimeId = Number(showtimeMeta.id);
     }
-  } catch {
-    // giữ nguyên
+  }
+
+  const normalizedSeats = Array.from(
+    new Set(seats.map((s) => s.trim().toUpperCase()).filter(Boolean))
+  );
+
+  // Kiểm tra xung đột: không cho phép đặt trùng ghế đã bán của cùng suất chiếu
+  if (normalizedSeats.length > 0) {
+    const [alreadyBooked] = await pool.query<RowDataPacket[]>(
+      `SELECT DISTINCT CONCAT(se.row_label, se.col_number) AS seat_code
+       FROM booking_seats bs
+       JOIN bookings b ON bs.booking_id = b.id
+       JOIN seats se ON bs.seat_id = se.id
+       WHERE b.showtime_id = ?
+         AND b.status <> 'cancelled'
+         AND b.payment_status <> 'refunded'
+         AND CONCAT(se.row_label, se.col_number) IN (?)`,
+      [validShowtimeId, normalizedSeats]
+    );
+
+    if (alreadyBooked.length > 0) {
+      const conflictCodes = alreadyBooked.map((r) => String(r.seat_code)).join(", ");
+      const conflictErr = new Error(
+        `Ghế [${conflictCodes}] ở suất chiếu này vừa được đặt bởi khách hàng khác. Vui lòng quay lại chọn ghế khác!`
+      ) as Error & { statusCode?: number };
+      conflictErr.statusCode = 409;
+      throw conflictErr;
+    }
   }
 
   // 1. Tạo mã đặt vé duy nhất
   let bookingCode = generateBookingCode();
-
-  // Đảm bảo mã không trùng trong DB
   let attempts = 0;
   while (attempts < 10) {
     const [existing] = await pool.query<RowDataPacket[]>(
@@ -292,44 +366,38 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
 
   const bookingId = result.insertId;
 
-  // 5. Lưu ghế đã đặt vào bảng booking_seats
-  try {
-    const [showtimeRows] = await pool.query<RowDataPacket[]>(
-      "SELECT room_id FROM showtimes WHERE id = ? LIMIT 1",
-      [validShowtimeId]
-    );
-    if (showtimeRows.length > 0) {
-      const roomId = showtimeRows[0].room_id;
-      for (const seatCode of seats) {
-        const cleanCode = seatCode.trim();
-        const row = cleanCode[0];
-        const col = parseInt(cleanCode.slice(1), 10);
-        if (!row || isNaN(col)) continue;
+  // 5. Lưu ghế đã đặt vào bảng booking_seats theo đúng room_id của suất chiếu
+  if (showtimeMeta) {
+    const roomId = Number(showtimeMeta.room_id);
+    const rowsCount = Number(showtimeMeta.rows_count) || 8;
+    const vipRows = String(showtimeMeta.vip_rows || "E,F,G");
 
-        let [seatRows] = await pool.query<RowDataPacket[]>(
-          "SELECT id FROM seats WHERE room_id = ? AND row_label = ? AND col_number = ? LIMIT 1",
-          [roomId, row, col]
+    for (const cleanCode of normalizedSeats) {
+      const row = cleanCode[0];
+      const col = parseInt(cleanCode.slice(1), 10);
+      if (!row || isNaN(col)) continue;
+
+      const [seatRows] = await pool.query<RowDataPacket[]>(
+        "SELECT id FROM seats WHERE room_id = ? AND row_label = ? AND col_number = ? LIMIT 1",
+        [roomId, row, col]
+      );
+      let seatId = seatRows[0]?.id;
+      if (!seatId) {
+        const seatType = classifySeatForRoom(cleanCode, rowsCount, vipRows);
+        const [ins] = await pool.query<ResultSetHeader>(
+          "INSERT INTO seats (room_id, row_label, col_number, seat_type) VALUES (?, ?, ?, ?)",
+          [roomId, row, col, seatType]
         );
-        let seatId = seatRows[0]?.id;
-        if (!seatId) {
-          const seatType = ["E", "F", "G"].includes(row) ? "vip" : "regular";
-          const [ins] = await pool.query<ResultSetHeader>(
-            "INSERT INTO seats (room_id, row_label, col_number, seat_type) VALUES (?, ?, ?, ?)",
-            [roomId, row, col, seatType]
-          );
-          seatId = ins.insertId;
-        }
+        seatId = ins.insertId;
+      }
 
-        if (seatId) {
-          await pool.query(
-            "INSERT IGNORE INTO booking_seats (booking_id, seat_id) VALUES (?, ?)",
-            [bookingId, seatId]
-          );
-        }
+      if (seatId) {
+        await pool.query(
+          "INSERT IGNORE INTO booking_seats (booking_id, seat_id) VALUES (?, ?)",
+          [bookingId, seatId]
+        );
       }
     }
-  } catch (err) {
-    console.error("Lưu booking_seats:", err);
   }
 
   // 6. Tăng usage_count của voucher (nếu có promo code)
@@ -349,12 +417,19 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
     );
   }
 
-  // 8. Xóa seat_locks của user sau khi booking thành công
+  // 8. Xóa seat_locks của user và session sau khi booking thành công
   try {
-    await pool.query(
-      "DELETE FROM seat_locks WHERE showtime_id = ? AND user_id = ?",
-      [validShowtimeId, validUserId]
-    );
+    if (sessionId) {
+      await pool.query(
+        "DELETE FROM seat_locks WHERE showtime_id = ? AND (user_id = ? OR session_id = ?)",
+        [validShowtimeId, validUserId, sessionId]
+      );
+    } else {
+      await pool.query(
+        "DELETE FROM seat_locks WHERE showtime_id = ? AND user_id = ?",
+        [validShowtimeId, validUserId]
+      );
+    }
   } catch {
     // bỏ qua nếu không có seat_locks
   }
@@ -368,13 +443,18 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
     finalPrice,
     pointsEarned,
     paymentStatus: "paid",
+    cinemaName: showtimeMeta ? String(showtimeMeta.cinema_name) : undefined,
+    cinemaAddress: showtimeMeta ? String(showtimeMeta.cinema_address) : undefined,
+    cinemaPhone: showtimeMeta ? String(showtimeMeta.cinema_phone) : undefined,
+    roomName: showtimeMeta ? String(showtimeMeta.room_name) : undefined,
+    showtime: showtimeMeta ? String(showtimeMeta.showtime_str) : undefined,
+    endTime: showtimeMeta ? String(showtimeMeta.end_time_str) : undefined,
+    showDate: showtimeMeta ? String(showtimeMeta.show_date_str) : undefined,
+    format: showtimeMeta ? String(showtimeMeta.format) : undefined,
   };
 }
 
-// ══════════════════════════════════════════════════════════════
 // 5.1 HỦY VÉ (CANCEL TICKET)
-// ══════════════════════════════════════════════════════════════
-
 export async function cancelTicket(
   bookingCodeOrId: string | number,
   userId?: number
@@ -385,7 +465,7 @@ export async function cancelTicket(
       SET status = 'cancelled', payment_status = 'refunded' 
       WHERE (booking_code = ? OR id = ?)
     `;
-    const params: any[] = [String(bookingCodeOrId), Number(bookingCodeOrId) || 0];
+    const params: unknown[] = [String(bookingCodeOrId), Number(bookingCodeOrId) || 0];
 
     if (userId) {
       query += " AND user_id = ?";
@@ -403,7 +483,7 @@ export async function cancelTicket(
 
     return {
       success: true,
-      message: "Hủy vé thành công! Tiền sẽ được hoàn lại theo chính sách rạp.",
+      message: "Hủy vé thành công! Ghế đã được giải phóng và tiền sẽ hoàn lại theo chính sách rạp.",
     };
   } catch (error) {
     console.error("Lỗi khi hủy vé:", error);
@@ -414,18 +494,26 @@ export async function cancelTicket(
   }
 }
 
-// ══════════════════════════════════════════════════════════════
-// 6. LẤY DANH SÁCH VÉ CỦA TÔI (MY TICKETS)
-// ══════════════════════════════════════════════════════════════
-
+// 6. LẤY DANH SÁCH VÉ CỦA TÔI (KÈM ĐẦY ĐỦ ĐỊA CHỈ RẠP & THÔNG TIN VÉ CHO FILE PDF)
 export async function getMyTickets(userId: number): Promise<TicketDetail[]> {
   const query = `
     SELECT 
       b.id,
       b.booking_code AS bookingCode,
+      b.customer_name AS customerName,
+      b.customer_email AS customerEmail,
+      b.customer_phone AS customerPhone,
+      u.name AS userName,
+      u.email AS userEmail,
+      u.phone AS userPhone,
       m.title AS movieTitle,
+      m.rating AS movieRating,
+      m.duration_min AS movieDuration,
+      m.genre AS movieGenre,
       m.poster_url AS posterUrl,
       c.name AS cinemaName,
+      CONCAT_WS(', ', c.address, c.district, c.city) AS cinemaAddress,
+      COALESCE(c.phone, '0123 456 789') AS cinemaPhone,
       r.name AS roomName,
       DATE_FORMAT(s.start_time, '%H:%i') AS showtime,
       DATE_FORMAT(s.end_time, '%H:%i') AS endTime,
@@ -439,8 +527,9 @@ export async function getMyTickets(userId: number): Promise<TicketDetail[]> {
       b.status,
       s.format,
       b.qr_code AS qrCode,
-      b.created_at AS createdAt
+      DATE_FORMAT(b.created_at, '%d/%m/%Y %H:%i') AS createdAt
     FROM bookings b
+    LEFT JOIN users u ON b.user_id = u.id
     LEFT JOIN showtimes s ON b.showtime_id = s.id
     LEFT JOIN movies m ON s.movie_id = m.id
     LEFT JOIN rooms r ON s.room_id = r.id
@@ -451,10 +540,8 @@ export async function getMyTickets(userId: number): Promise<TicketDetail[]> {
 
   const [rows] = await pool.query<RowDataPacket[]>(query, [userId]);
 
-  // Lấy danh sách ghế cho từng booking
   const tickets: TicketDetail[] = [];
   for (const row of rows) {
-    // Lấy ghế
     const [seatRows] = await pool.query<RowDataPacket[]>(
       `SELECT CONCAT(se.row_label, se.col_number) AS seatCode, se.seat_type
        FROM booking_seats bs
@@ -464,56 +551,63 @@ export async function getMyTickets(userId: number): Promise<TicketDetail[]> {
       [row.id]
     );
 
-    let seatsStr = "";
-    if (seatRows.length > 0) {
-      const seatCodes = seatRows.map((s) => s.seatCode);
-      const hasVip = seatRows.some((s) => s.seat_type === "vip");
-      seatsStr = seatCodes.join(", ") + (hasVip ? " (VIP)" : " (Thường)");
-    } else {
-      // Fallback: đọc từ customer_name (nếu không có booking_seats)
-      seatsStr = "Không rõ";
-    }
-
     tickets.push({
       id: row.id,
       bookingCode: row.bookingCode,
-      movieTitle: row.movieTitle,
+      movieTitle: row.movieTitle || "Tín hiệu từ ngày mai",
+      movieRating: row.movieRating || "T13",
+      movieDuration: Number(row.movieDuration) || 118,
+      movieGenre: row.movieGenre || "Điện ảnh",
       posterUrl: row.posterUrl,
-      cinemaName: row.cinemaName,
-      roomName: row.roomName,
-      showtime: row.showtime,
-      endTime: row.endTime,
-      showDate: row.showDate,
-      seats: seatsStr,
+      cinemaName: row.cinemaName || "Cinema Nguyễn Du",
+      cinemaAddress:
+        row.cinemaAddress || "135 Nguyễn Du, Bến Thành, Quận 1, TP. Hồ Chí Minh",
+      cinemaPhone: row.cinemaPhone || "028 3825 1234",
+      roomName: row.roomName || "Phòng 01",
+      showtime: row.showtime || "19:30",
+      endTime: row.endTime || "21:28",
+      showDate: row.showDate || "24/10/2026",
+      seats: formatSeatLabels(seatRows),
+      customerName: row.customerName || row.userName || "Khách hàng thành viên",
+      customerEmail: row.customerEmail || row.userEmail || "",
+      customerPhone: row.customerPhone || row.userPhone || "",
       totalPrice: Number(row.totalPrice),
       discountAmount: Number(row.discountAmount),
       finalPrice: Number(row.finalPrice),
       promoCode: row.promoCode,
-      paymentMethod: row.paymentMethod,
-      paymentStatus: row.paymentStatus,
-      status: row.status,
-      format: row.format,
-      qrCode: row.qrCode,
-      createdAt: row.createdAt,
+      paymentMethod: row.paymentMethod || "momo",
+      paymentStatus: row.paymentStatus || "paid",
+      status: row.status || "upcoming",
+      format: row.format || "2D Dolby Atmos",
+      qrCode: row.qrCode || generateQRCodeData(row.bookingCode),
+      createdAt: String(row.createdAt || ""),
     });
   }
 
   return tickets;
 }
 
-// ══════════════════════════════════════════════════════════════
 // 7. LẤY CHI TIẾT 1 VÉ THEO BOOKING CODE
-// ══════════════════════════════════════════════════════════════
-
 export async function getTicketByCode(bookingCode: string): Promise<TicketDetail | null> {
   const query = `
     SELECT 
       b.id,
       b.user_id AS userId,
       b.booking_code AS bookingCode,
+      b.customer_name AS customerName,
+      b.customer_email AS customerEmail,
+      b.customer_phone AS customerPhone,
+      u.name AS userName,
+      u.email AS userEmail,
+      u.phone AS userPhone,
       m.title AS movieTitle,
+      m.rating AS movieRating,
+      m.duration_min AS movieDuration,
+      m.genre AS movieGenre,
       m.poster_url AS posterUrl,
       c.name AS cinemaName,
+      CONCAT_WS(', ', c.address, c.district, c.city) AS cinemaAddress,
+      COALESCE(c.phone, '0123 456 789') AS cinemaPhone,
       r.name AS roomName,
       DATE_FORMAT(s.start_time, '%H:%i') AS showtime,
       DATE_FORMAT(s.end_time, '%H:%i') AS endTime,
@@ -527,8 +621,9 @@ export async function getTicketByCode(bookingCode: string): Promise<TicketDetail
       b.status,
       s.format,
       b.qr_code AS qrCode,
-      b.created_at AS createdAt
+      DATE_FORMAT(b.created_at, '%d/%m/%Y %H:%i') AS createdAt
     FROM bookings b
+    LEFT JOIN users u ON b.user_id = u.id
     JOIN showtimes s ON b.showtime_id = s.id
     JOIN movies m ON s.movie_id = m.id
     JOIN rooms r ON s.room_id = r.id
@@ -551,41 +646,40 @@ export async function getTicketByCode(bookingCode: string): Promise<TicketDetail
     [row.id]
   );
 
-  let seatsStr = "";
-  if (seatRows.length > 0) {
-    const seatCodes = seatRows.map((s) => s.seatCode);
-    const hasVip = seatRows.some((s) => s.seat_type === "vip");
-    seatsStr = seatCodes.join(", ") + (hasVip ? " (VIP)" : " (Thường)");
-  }
-
   return {
     id: row.id,
     bookingCode: row.bookingCode,
-    movieTitle: row.movieTitle,
+    movieTitle: row.movieTitle || "Tín hiệu từ ngày mai",
+    movieRating: row.movieRating || "T13",
+    movieDuration: Number(row.movieDuration) || 118,
+    movieGenre: row.movieGenre || "Điện ảnh",
     posterUrl: row.posterUrl,
-    cinemaName: row.cinemaName,
-    roomName: row.roomName,
+    cinemaName: row.cinemaName || "Cinema Nguyễn Du",
+    cinemaAddress:
+      row.cinemaAddress || "135 Nguyễn Du, Bến Thành, Quận 1, TP. Hồ Chí Minh",
+    cinemaPhone: row.cinemaPhone || "028 3825 1234",
+    roomName: row.roomName || "Phòng 01",
     showtime: row.showtime,
     endTime: row.endTime,
     showDate: row.showDate,
-    seats: seatsStr,
+    seats: formatSeatLabels(seatRows),
+    customerName: row.customerName || row.userName || "Khách hàng thành viên",
+    customerEmail: row.customerEmail || row.userEmail || "",
+    customerPhone: row.customerPhone || row.userPhone || "",
     totalPrice: Number(row.totalPrice),
     discountAmount: Number(row.discountAmount),
     finalPrice: Number(row.finalPrice),
     promoCode: row.promoCode,
-    paymentMethod: row.paymentMethod,
-    paymentStatus: row.paymentStatus,
-    status: row.status,
-    format: row.format,
-    qrCode: row.qrCode,
-    createdAt: row.createdAt,
+    paymentMethod: row.paymentMethod || "momo",
+    paymentStatus: row.paymentStatus || "paid",
+    status: row.status || "upcoming",
+    format: row.format || "2D Dolby Atmos",
+    qrCode: row.qrCode || generateQRCodeData(row.bookingCode),
+    createdAt: String(row.createdAt || ""),
   };
 }
 
-// ══════════════════════════════════════════════════════════════
 // 8. LẤY TỔNG ĐIỂM TÍCH LŨY THÀNH VIÊN
-// ══════════════════════════════════════════════════════════════
-
 export async function getMemberPoints(userId: number): Promise<number> {
   const [rows] = await pool.query<RowDataPacket[]>(
     "SELECT points FROM users WHERE id = ? LIMIT 1",
