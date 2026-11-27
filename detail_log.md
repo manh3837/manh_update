@@ -8,7 +8,7 @@
 | 1 | [qrcode.ts](file:///c:/Users/manhjj/Downloads/cinema_management-main%20%281%29/cinema_management-main/Frontend/src/lib/qrcode.ts) | Thuật toán sinh ma trận mã QR chuẩn quốc tế ISO/IEC 18004 (quét thật bằng camera điện thoại, không cần cài thêm thư viện npm). |
 | 2 | [TicketQRCode.tsx](file:///c:/Users/manhjj/Downloads/cinema_management-main%20%281%29/cinema_management-main/Frontend/src/components/common/TicketQRCode.tsx) | Component hiển thị mã QR vé sắc nét dạng SVG trên giao diện Thanh toán và Vé của tôi. |
 | 3 | [ticketPdf.ts](file:///c:/Users/manhjj/Downloads/cinema_management-main%20%281%29/cinema_management-main/Frontend/src/lib/ticketPdf.ts) | Bộ dàn trang & xuất file vé `.pdf` (`ve-<MÃ_VÉ>.pdf`) khổ A4 căn chỉnh bố cục đẹp, có mã QR vé, địa chỉ rạp và hotline. |
-| *(+1)* | [KET_QUA_KIEM_THU_CINEMA_MANAGEMENT.xlsx](file:///c:/Users/manhjj/Downloads/cinema_management-main%20%281%29/cinema_management-main/KET_QUA_KIEM_THU_CINEMA_MANAGEMENT.xlsx) | File Excel kết quả kiểm thử bạn yêu cầu ở bước vừa rồi. |
+
 
 ---
 
